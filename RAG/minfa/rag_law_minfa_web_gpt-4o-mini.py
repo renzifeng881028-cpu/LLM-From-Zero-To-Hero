@@ -79,8 +79,15 @@ def init_models():
     return embed_model, llm
 
 # ================== 数据处理 ==================
+# 层级字段：编/分编/章/节（无对应层级时为空字符串）
+HIERARCHY_FIELDS = ("book", "sub_book", "chapter", "section")
+
 def load_and_validate_json_files(data_dir: str) -> List[Dict]:
-    """加载并验证JSON法律文件"""
+    """加载并验证JSON法律文件
+
+    数据格式：列表，每个元素是一条法条，必须包含 title 和 content 字符串字段，
+    可选层级字段 book/sub_book/chapter/section（见 HIERARCHY_FIELDS）。
+    """
     json_files = list(Path(data_dir).glob("*.json"))
     assert json_files, f"未找到JSON文件于 {data_dir}"
 
@@ -91,16 +98,19 @@ def load_and_validate_json_files(data_dir: str) -> List[Dict]:
                 data = json.load(f)
                 if not isinstance(data, list):
                     raise ValueError(f"文件 {json_file.name} 根元素应为列表")
-                for item in data:
+                for idx, item in enumerate(data):
                     if not isinstance(item, dict):
-                        raise ValueError(f"文件 {json_file.name} 包含非字典元素")
+                        raise ValueError(f"文件 {json_file.name} 第 {idx} 条不是字典")
+                    for field in ("title", "content"):
+                        if not isinstance(item.get(field), str) or not item[field]:
+                            raise ValueError(f"文件 {json_file.name} 第 {idx} 条缺少非空的字符串字段 '{field}'")
                     for k, v in item.items():
                         if not isinstance(v, str):
-                            raise ValueError(f"文件 {json_file.name} 中键 '{k}' 的值不是字符串")
-                all_data.extend({
-                    "content": item,
-                    "metadata": {"source": json_file.name}
-                } for item in data)
+                            raise ValueError(f"文件 {json_file.name} 第 {idx} 条中字段 '{k}' 的值不是字符串")
+                    all_data.append({
+                        "article": item,
+                        "source": json_file.name
+                    })
             except Exception as e:
                 raise RuntimeError(f"加载文件 {json_file} 失败: {str(e)}")
 
@@ -110,27 +120,32 @@ def load_and_validate_json_files(data_dir: str) -> List[Dict]:
 def create_nodes(raw_data: List[Dict]) -> List[TextNode]:
     nodes = []
     for entry in raw_data:
-        law_dict = entry["content"]
-        source_file = entry["metadata"]["source"]
+        article = entry["article"]
+        source_file = entry["source"]
 
-        for full_title, content in law_dict.items():
-            node_id = f"{source_file}::{full_title}"
-            parts = full_title.split(" ", 1)
-            law_name = parts[0] if len(parts) > 0 else "未知法律"
-            article = parts[1] if len(parts) > 1 else "未知条款"
+        full_title = article["title"]
+        node_id = f"{source_file}::{full_title}"
+        parts = full_title.split(" ", 1)
+        law_name = parts[0] if len(parts) > 0 else "未知法律"
+        article_no = parts[1] if len(parts) > 1 else "未知条款"
 
-            node = TextNode(
-                text=content,
-                id_=node_id,
-                metadata={
-                    "law_name": law_name,
-                    "article": article,
-                    "full_title": full_title,
-                    "source_file": source_file,
-                    "content_type": "legal_article"
-                }
-            )
-            nodes.append(node)
+        metadata = {
+            "law_name": law_name,
+            "article": article_no,
+            "full_title": full_title,
+            "source_file": source_file,
+            "content_type": "legal_article"
+        }
+        # 层级元数据（编/分编/章/节），缺省为空字符串
+        for field in HIERARCHY_FIELDS:
+            metadata[field] = article.get(field, "")
+
+        node = TextNode(
+            text=article["content"],
+            id_=node_id,
+            metadata=metadata
+        )
+        nodes.append(node)
 
     print(f"生成 {len(nodes)} 个文本节点（ID示例：{nodes[0].id_}）")
     return nodes
@@ -238,6 +253,9 @@ def main():
         for idx, node in enumerate(response.source_nodes, 1):
             meta = node.metadata
             st.write(f"\n[{idx}] {meta['full_title']}")
+            hierarchy = " / ".join(filter(None, (meta.get(f, "") for f in HIERARCHY_FIELDS)))
+            if hierarchy:
+                st.write(f"  章节定位：{hierarchy}")
             st.write(f"  来源文件：{meta['source_file']}")
             st.write(f"  法律名称：{meta['law_name']}")
             st.write(f"  条款内容：{node.text[:100]}...")
