@@ -82,6 +82,12 @@ def init_models():
 # 层级字段：编/分编/章/节（无对应层级时为空字符串）
 HIERARCHY_FIELDS = ("book", "sub_book", "chapter", "section")
 
+# 从「embedding 文本 / LLM 上下文」中排除的元数据字段：
+# 纯标识或恒定字段（source_file/content_type），以及已包含在 full_title 里的冗余字段（law_name/article）
+# 注意：排除只是不拼进文本，node.metadata 中仍完整保留（供 UI 展示和后续元数据过滤使用）
+EXCLUDED_EMBED_METADATA_KEYS = ["law_name", "article", "source_file", "content_type"]
+EXCLUDED_LLM_METADATA_KEYS = ["law_name", "article", "source_file", "content_type"]
+
 def load_and_validate_json_files(data_dir: str) -> List[Dict]:
     """加载并验证JSON法律文件
 
@@ -136,14 +142,19 @@ def create_nodes(raw_data: List[Dict]) -> List[TextNode]:
             "source_file": source_file,
             "content_type": "legal_article"
         }
-        # 层级元数据（编/分编/章/节），缺省为空字符串
+        # 层级元数据（编/分编/章/节）：仅写入非空值，避免文本中出现空 "key:" 行
         for field in HIERARCHY_FIELDS:
-            metadata[field] = article.get(field, "")
+            value = article.get(field, "")
+            if value:
+                metadata[field] = value
 
         node = TextNode(
             text=article["content"],
             id_=node_id,
-            metadata=metadata
+            metadata=metadata,
+            # 控制哪些元数据拼入 embedding 文本 / LLM 上下文（常量见上方）
+            excluded_embed_metadata_keys=list(EXCLUDED_EMBED_METADATA_KEYS),
+            excluded_llm_metadata_keys=list(EXCLUDED_LLM_METADATA_KEYS),
         )
         nodes.append(node)
 
