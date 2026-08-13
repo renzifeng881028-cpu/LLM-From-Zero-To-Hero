@@ -14,7 +14,6 @@ import chromadb
 from llama_index.core import VectorStoreIndex, StorageContext, Settings
 from llama_index.core.schema import TextNode
 from llama_index.llms.openai import OpenAI
-from llama_index.llms.openai_like import OpenAILike
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.core import PromptTemplate
